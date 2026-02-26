@@ -45,8 +45,8 @@ import number_pool
 EMA_ALPHA = 0.1
 TARGET_STABILITY = 1.0
 
-# Initial Hardware Baseline
-GPU_BATCH_SIZE = 1_000_000
+# Initial Hardware Baseline (conservative default to avoid driver resets)
+GPU_BATCH_SIZE = 200_000
 LOG_INTERVAL = 2.0
 SUMMARY_INTERVAL = 60.0
 TOTAL_SPACE = nCr(len(magic.numbers), 9)
@@ -232,9 +232,43 @@ def run_solver():
     parser = argparse.ArgumentParser()
     parser.add_argument("-resume", type=str, help="ID of the previous run to resume")
     parser.add_argument("--cores", type=int, default=16)
-    parser.add_argument("--mode", type=str, default="science", choices=["science", "harmonic"], 
-                        help="Search mode: 'science' (strict math) or 'harmonic' (heuristics)")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="science",
+        choices=["science", "harmonic"],
+        help="Search mode: 'science' (strict math) or 'harmonic' (heuristics)",
+    )
+    parser.add_argument(
+        "--power",
+        type=int,
+        choices=[1, 2, 3],
+        help="Override MAGIC_POWER for this run: 1=baseline, 2=squares, 3=cubes.",
+    )
+    parser.add_argument(
+        "--execute-here",
+        action="store_true",
+        help=(
+            "If used with --power 1, run ONLY the n=1 foundation calibration "
+            "and exit (no full siege). Other powers ignore this flag."
+        ),
+    )
     args = parser.parse_args()
+
+    # Optional per-run power override so commands like
+    # `... run_solver.py --mode science --power 1 --execute-here`
+    # behave as expected.
+    if args.power is not None:
+        import os
+
+        os.environ["MAGIC_POWER"] = str(args.power)
+
+    # ─── Calibration-Only Fast Exit (n=1) ───
+    if args.power == 1 and args.execute_here:
+        ok = run_foundation_calibration()
+        # Mirror the boolean as a process exit code for scripting, but
+        # avoid starting the full GPU/CPU siege.
+        sys.exit(0 if ok else 1)
 
     # ─── Directories ───
     run_dir = setup_run_dir(args.resume)

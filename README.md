@@ -60,6 +60,37 @@ The search isn't pure brute force — `magic.py` enforces strict geometric const
 - `torch` (PyTorch with CUDA)
 - `numpy`
 
+---
+
+## Diophantine Constructor & Decision Tools
+
+In addition to the GPU siege, this repo includes a **Diophantine constructor**
+in `diophantine_constructor.py` that analyzes the strict 3×3 magic-square
+geometry around the center.
+
+- **Pair generator**: For a chosen center \(C = k^2\), it finds all square pairs
+  \((a^2, b^2)\) with \(a^2 + b^2 = 2C\). These are the only possible
+  opposite pairs around the center in any 3×3 magic square.
+- **Two-line test**: Checks whether a center supports **two orthogonal
+  3-term arithmetic progressions of distinct squares** through the same center
+  (a row and a column). For many centers, this already fails.
+- **Forced-corner algebra**: For any valid two-line configuration with offsets
+  \(\Delta_x, \Delta_y\), the four corners are *forced* to be
+  \(C \pm \Delta_x \pm \Delta_y\). The script reconstructs these values and
+  checks if all nine entries can be distinct perfect squares.
+- **Corner check**: A helper (`--corner-check`) computes the forced corners
+  for a given \((C, \Delta_x, \Delta_y)\), reports whether each is a square,
+  and shows residues mod 8 and mod 25.
+- **Factor logging**: With `--log-corner-factors`, it logs prime factorizations
+  of forced corners over a range of centers for deeper number-theoretic analysis.
+
+Together, these tools act as a **decision procedure** for a large family of
+structured candidates: for any fixed center and 2‑line configuration, the code
+can now say “this 3×3 magic square of squares is impossible” via pure algebra
+and arithmetic, not brute-force enumeration.
+
+---
+
 ## Power Modes
 
 The search pool is configured via `number_pool.py` and `power_modes.py`, with

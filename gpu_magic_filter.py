@@ -42,24 +42,19 @@ def filter_combinations_gpu(combinations_list):
     # 1. Calculate Total Sum and Magic Constant (M)
     total_sums = tensor_combos.sum(dim=1)  # Shape: (N,)
 
-    # FILTER 1: Total sum must be divisible by 3 (Magic Constant M must be integer)
-    divisible_mask = (total_sums % 3 == 0)
+    # 1. Total sum must be divisible by 9 (for M/3 to be an integer center)
+    divisible_mask = (total_sums % 9 == 0)
 
-    # 2. Calculate Target Center
-    # If not divisible, the result will be wrong, but divisible_mask catches those.
-    target_centers = total_sums // 3
+    # 2. Calculate Target Center (C = TotalSum / 9)
+    target_centers = total_sums // 9
 
     # FILTER 2: Target Center MUST be present in the combination
     # (tensor_combos == target_centers.unsqueeze(1)) checks each of the 9 cols
     # .any(dim=1) checks if any col matched the target_center
     center_present_mask = (tensor_combos == target_centers.unsqueeze(1)).any(dim=1)
 
-    # FILTER 3: Range check (Optional but kept for safety)
-    # 9 smallest = 8100 (M=2700), 9 largest = 57600 (M=19200)
-    range_mask = (target_centers >= 2700) & (target_centers <= 19200)
-
-    # Combined mask
-    valid_mask = divisible_mask & center_present_mask & range_mask
+    # Combined mask (divisible by 3 and center element must be in the set)
+    valid_mask = divisible_mask & center_present_mask
 
     # Extract survivors
     survivor_indices = valid_mask.nonzero(as_tuple=True)[0]
