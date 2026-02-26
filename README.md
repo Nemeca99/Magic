@@ -2,14 +2,14 @@
 
 A self-contained, massively optimized pipeline for searching the legendary **3x3 Magic Square of Squares** — where every row, column, and diagonal consists of distinct perfect squares summing to the same value.
 
-The search space is ~2.3 billion combinations. A pure CPU approach would take **130 days**. This pipeline uses a PyTorch GPU Probability Funnel to reduce the search space before the CPU ever touches it.
+The search space is 3,042,312,350 combinations. A pure CPU approach would take **130 days**. This pipeline uses a PyTorch GPU Probability Funnel to reduce the search space before the CPU ever touches it.
 
 ---
 
 ## Architecture: Panning for Gold
 
 ```
-itertools.combinations(numbers, 9)  ← river of 2.3B candidate sets
+itertools.combinations(numbers, 9)  ← river of ~3B candidate sets
            │
            ▼
 ┌──────────────────────────────────────┐
@@ -21,7 +21,7 @@ itertools.combinations(numbers, 9)  ← river of 2.3B candidate sets
                    ▼
 ┌──────────────────────────────────────┐
 │  CPU PHASE B — Permutation + Check   │  16 parallel threads
-│  • magic.check_magic(combo)          │  Tries 9 × 8! = 362,880
+│  • magic.check_magic(combo)          │  Tries 8! = 40,320     
 │  • Full harmonic + phi + curvature   │  arrangements per combo
 │  • Root triangle geometry validation │
 └──────────────────────────────────────┘

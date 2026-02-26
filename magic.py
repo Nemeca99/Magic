@@ -159,7 +159,13 @@ def is_magic(grid):
     )
 
 # Optimized check_magic with center lock, root caching, and short-circuiting
-def check_magic(combo, target_center=None, delta_tol=18, phi_tol=0.05):
+def check_magic(combo, target_center=None, delta_tol=18, phi_tol=0.05, mode="science"):
+    """
+    Checks if a combination forms a magic square.
+    Modes:
+      - "science" (default): Strict magic square laws only.
+      - "harmonic": Enables experimental geometric heuristics.
+    """
     # Precheck: total sum must be divisible by 3
     if sum(combo) % 3 != 0:
         return None
@@ -190,17 +196,22 @@ def check_magic(combo, target_center=None, delta_tol=18, phi_tol=0.05):
                 sum(grid[i][2-i] for i in range(3)) != magic_sum
             ):
                 continue
-            # Expensive checks only if line sums pass
-            if not root_triangle_check(grid, delta_tol):
                 continue
-            if not phi_cross_check(grid, phi_tol):
-                continue
-            if not curvature_balance(grid):
-                continue
-            if not triangle_difference_harmony(grid):
-                continue
-            if not ratio_based_diagonal_check(grid):
-                continue
+
+            # --- HEURISTICS (Harmonic Mode Only) ---
+            if mode == "harmonic":
+                # Expensive checks only if line sums pass
+                if not root_triangle_check(grid, delta_tol):
+                    continue
+                if not phi_cross_check(grid, phi_tol):
+                    continue
+                if not curvature_balance(grid):
+                    continue
+                if not triangle_difference_harmony(grid):
+                    continue
+                if not ratio_based_diagonal_check(grid):
+                    continue
+            
             if not center_anchor_check(grid, target_center):
                 continue
             export_grid(grid, filename="magic_square_results.txt")
