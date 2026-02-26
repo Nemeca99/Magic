@@ -3,7 +3,8 @@ from multiprocessing import Pool, cpu_count
 from functools import partial, lru_cache
 from core_formulas_and_concepts import core_formulas
 
-numbers = [i**2 for i in range(30, 81)]  # 30² to 80² (900 to 6400)
+import number_pool
+numbers = number_pool.get_number_pool()
 
 @lru_cache(maxsize=None)
 def root(x):

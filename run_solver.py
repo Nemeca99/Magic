@@ -18,8 +18,20 @@ import threading
 import queue
 import argparse
 import datetime
+import math
 from pathlib import Path
 from collections import deque
+
+def nCr(n, r):
+    if r < 0 or r > n: return 0
+    if r == 0 or r == n: return 1
+    if r > n // 2: r = n - r
+    
+    numer = denom = 1
+    for i in range(1, r + 1):
+        numer = numer * (n - i + 1)
+        denom = denom * i
+    return numer // denom
 
 # Add local module paths
 BASE = Path(__file__).parent
@@ -30,7 +42,7 @@ import magic
 GPU_BATCH_SIZE = 1_000_000
 LOG_INTERVAL = 2.0
 SUMMARY_INTERVAL = 60.0
-TOTAL_SPACE = 3_042_312_350 
+TOTAL_SPACE = nCr(len(magic.numbers), 9)
 EMA_ALPHA = 0.1
 
 class SolverMetrics:
