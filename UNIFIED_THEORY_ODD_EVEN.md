@@ -68,6 +68,33 @@ Summary of completed search runs using the **Science Mode** solver.
 | Run ID | Power ($n$) | Pool Range | Combinations | Mode | Result |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **(6)** | **2 (Squares)** | **30² to 80²** | **3,042,312,350** | **Science** | **Exhaustive Negative (0 Found)** |
+| **TBD** | **3 (Cubes)** | **30³ to 80³** | **3,042,312,350** | **Science** | **Pending Siege (n=3 odd-power search)** |
+
+### 5.1 Siege Protocol for $n = 3$
+
+All future odd-power ($n = 3$) sieges are required to:
+
+1. **Run n=1 foundation calibration first**  
+   - The solver invokes `run_foundation_calibration()` before any GPU/CPU siege work.  
+   - Calibration uses the **baseline integer pool** \\(1..9\\) and verifies that at least one canonical magic square is identified via `gpu_magic_filter` + `magic.check_magic` with center locked at 5.  
+   - A successful calibration is logged as a `type = "calibration"` event in `log.jsonl` with the active `power` and `pool` metadata.
+
+2. **Run the n=3 cube siege with RID engaged**  
+   - The active pool is configured via `MAGIC_POWER=3` and `number_pool.py` / `power_modes.py`.  
+   - Pool description: **Cubes (30³ to 80³)**, mirroring the same index range as the even-power siege.  
+   - The RID governor (`RIDGovernor`) remains **power-agnostic** and only responds to telemetry: GPU memory headroom (LTP) and throughput stability (RLE).
+
+3. **Record full telemetry for post-hoc analysis**  
+   - Each tick in `log.jsonl` is annotated with:  
+     - `combos`, `cps`, `spm`, `s_n`, `batch`  
+     - `power` (expected `3`) and `pool` (`"Cubes (30^3 to 80^3)"`).  
+   - `state.json` snapshots also include `power` and `pool` for reconstructing the exact configuration at any point in the siege.
+
+4. **Execute via external terminal (no IDE auto-runs)**  
+   - Recommended pattern (PowerShell):  
+     - `cd l:\\Steel_Brain\\Sqaures\\Magic_Complete`  
+     - `$env:MAGIC_POWER=\"3\"; python run_solver.py --mode science --cores 16`  
+   - Or use the `magic_runner.py` helper to print safe commands for the chosen power without auto-starting the siege.
 
 ---
 

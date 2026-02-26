@@ -21,6 +21,7 @@ import datetime
 import math
 from pathlib import Path
 from collections import deque
+import torch # Move to top for linter
 
 def nCr(n, r):
     if r < 0 or r > n: return 0
@@ -38,12 +39,59 @@ BASE = Path(__file__).parent
 sys.path.insert(0, str(BASE))
 
 import magic
+import number_pool
 
+# RID Framework Coefficients (Physical Foundation)
+EMA_ALPHA = 0.1
+TARGET_STABILITY = 1.0
+
+# Initial Hardware Baseline
 GPU_BATCH_SIZE = 1_000_000
 LOG_INTERVAL = 2.0
 SUMMARY_INTERVAL = 60.0
 TOTAL_SPACE = nCr(len(magic.numbers), 9)
-EMA_ALPHA = 0.1
+
+class RIDGovernor:
+    """
+    AIOS V2 Dynamic Stability Governor.
+    Governs GPU_BATCH_SIZE (Structural Capacity) to hit 100% load safely.
+    """
+    def __init__(self, initial_batch_size):
+        self.batch_size = initial_batch_size
+        self.s_n = 1.0
+        self.ltp = 1.0 # Structural Capacity (Memory Headroom)
+        self.rle = 1.0 # Load Efficiency (Throughput Stability)
+        self.history = deque(maxlen=10)
+
+    def step(self, cps_ema, current_cps):
+        # 1. Calculate LTP (Structural Support)
+        # Ratio of available GPU memory vs total reserved
+        if torch.cuda.is_available():
+            reserved = torch.cuda.memory_reserved()
+            allocated = torch.cuda.memory_allocated()
+            free = reserved - allocated
+            # LTP = min(1, support/demand). We use normalized memory headroom.
+            self.ltp = min(1.0, (free + 1e-6) / (reserved + 1e-6))
+        
+        # 2. Calculate RLE (Load Efficiency)
+        # Jitter in CPS. If current_cps drops significantly below EMA, efficiency is low.
+        if cps_ema > 0:
+            self.rle = min(1.0, current_cps / cps_ema)
+        
+        # 3. Compute S_n (Master Stability Scalar)
+        # S_n = RSR * LTP * RLE. (RSR assumes 1.0 for compute consistency)
+        self.s_n = 1.0 * self.ltp * self.rle
+        
+        # 4. Adjust Batch Size (Governance)
+        if self.s_n < 0.8:
+            self.batch_size = int(self.batch_size * 0.8) # Throttle down
+            print(f"\n[RID] Stability Alert (S_n: {self.s_n:.4f}) | Throttling to {self.batch_size:,}")
+        elif self.s_n >= 0.95 and self.ltp > 0.3:
+            self.batch_size = int(self.batch_size * 1.1) # Scale up
+            # Limit to 10M to prevent OOM
+            self.batch_size = min(self.batch_size, 10_000_000)
+        
+        return self.batch_size, self.s_n
 
 class SolverMetrics:
     def __init__(self, start_batch=0, total_found=0):
@@ -111,6 +159,10 @@ class JsonLogger:
         entry = {"ts": time.time(), "type": "tick", **data}
         with open(self.path, "a") as f:
             f.write(json.dumps(entry) + "\n")
+    def log_calibration(self, data):
+        entry = {"ts": time.time(), "type": "calibration", **data}
+        with open(self.path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
     def log_discovery(self, data):
         entry = {"ts": time.time(), "type": "solution", **data}
         with open(self.path, "a") as f:
@@ -153,6 +205,29 @@ def validate_combination(combo_tuple, mode="science"):
     # Permutation Check (The Panner)
     return magic.check_magic(list(combo_tuple), target_center=sum(combo_tuple)//3, mode=mode)
 
+def run_foundation_calibration():
+    """
+    n=1 Foundation Calibration. 
+    Verifies the pipeline using the 1-9 integer set (The Origin).
+    """
+    print("\n[RID] Starting n=1 Foundation Calibration (The Origin)...")
+    import gpu_magic_filter
+    calibration_pool = list(range(1, 10))
+    combos = list(itertools.combinations(calibration_pool, 9))
+    
+    survivors = gpu_magic_filter.filter_combinations_gpu(combos)
+    found = 0
+    for s in survivors:
+        if magic.check_magic(list(s), target_center=5, mode="science"):
+            found += 1
+    
+    if found >= 1:
+        print(f"[RID] FOUNDATION VERIFIED: {found} base squares identified. S_n = 1.0")
+        return True
+    else:
+        print("[RID] FOUNDATION FAILURE: Pipeline inconsistent.")
+        return False
+
 def run_solver():
     parser = argparse.ArgumentParser()
     parser.add_argument("-resume", type=str, help="ID of the previous run to resume")
@@ -176,7 +251,7 @@ def run_solver():
     logger = JsonLogger(run_dir)
     
     # ─── Core Logic ───
-    import gpu_magic_filter # Import here to avoid workers hitting torch
+    import gpu_magic_filter 
     combos = itertools.combinations(magic.numbers, 9)
     items_to_skip = batches_processed * GPU_BATCH_SIZE
     
@@ -184,29 +259,56 @@ def run_solver():
         print(f"[SOLVER] Skipping {items_to_skip:,} combinations...")
         deque(itertools.islice(combos, items_to_skip), maxlen=0)
 
+    # ─── Foundation Calibration ───
+    foundation_ok = run_foundation_calibration()
+    logger.log_calibration(
+        {
+            "status": "ok" if foundation_ok else "failed",
+            "power": getattr(number_pool, "ACTIVE_POWER", None),
+            "pool": getattr(number_pool, "POOL_DESCRIPTION", None),
+        }
+    )
+    if not foundation_ok:
+        print("[!] Fatal: Foundation calibration failed. Aborting Siege.")
+        sys.exit(1)
+
     metrics = SolverMetrics(batches_processed, total_found)
-    tasks = queue.Queue(maxsize=15) # Backpressure buffer
+    governor = RIDGovernor(GPU_BATCH_SIZE)
+    tasks = queue.Queue(maxsize=15) # type: ignore
     
     print(f"[SOLVER] Mode: {args.mode.upper()} | Space: {TOTAL_SPACE:,}")
-    print(f"[SOLVER] GPU/CPU Pipeline Engaged | Cores: {args.cores}")
+    print(f"[SOLVER] RID Stability Governor Engaged | Baseline: {GPU_BATCH_SIZE:,}")
 
     # ─── GPU Producer Thread ───
     def producer():
         gen = combos
         while True:
-            batch = list(itertools.islice(gen, GPU_BATCH_SIZE))
+            # Dynamic batch size from governor
+            current_batch_size = governor.batch_size
+            batch = list(itertools.islice(gen, current_batch_size))
             if not batch:
                 tasks.put(None); break
             
             t0 = time.time()
             survivors = gpu_magic_filter.filter_combinations_gpu(batch)
-            metrics.update_gpu((time.time() - t0)*1000, len(survivors))
+            dt_ms = (time.time() - t0)*1000
+            metrics.update_gpu(dt_ms, len(survivors))
             
-            tasks.put((metrics.batches_total - 1, survivors))
+            tasks.put((metrics.batches_total - 1, survivors, current_batch_size))
             
             if metrics.batches_total % 50 == 0:
                 with open(state_file, "w") as f:
-                    json.dump({"batches_processed": metrics.batches_total, "total_found": metrics.total_found, "ts": time.time()}, f)
+                    json.dump(
+                        {
+                            "batches_processed": metrics.batches_total,
+                            "total_found": metrics.total_found,
+                            "ts": time.time(),
+                            "batch_size": current_batch_size,
+                            "power": getattr(number_pool, "ACTIVE_POWER", None),
+                            "pool": getattr(number_pool, "POOL_DESCRIPTION", None),
+                        },
+                        f,
+                    )
 
     threading.Thread(target=producer, daemon=True).start()
 
@@ -221,7 +323,7 @@ def run_solver():
                 task = tasks.get(timeout=1.0)
                 if task is None: break
                 
-                b_idx, survivors = task
+                b_idx, survivors, current_batch_size = task
                 if survivors:
                     t1 = time.time()
                     results = list(pool.imap_unordered(validate_func, survivors, chunksize=max(1, len(survivors)//args.cores)))
@@ -241,17 +343,30 @@ def run_solver():
                 now = time.time()
                 if now - last_ui > LOG_INTERVAL:
                     cps, dt = metrics.calculate_tick()
+                    # Step the Governor
+                    new_batch, s_n = governor.step(metrics.cps_ema, cps)
+                    
                     uptime = now - metrics.start_timer
-                    pct = (metrics.batches_total * GPU_BATCH_SIZE / TOTAL_SPACE) * 100
+                    pct = (metrics.batches_total * governor.batch_size / TOTAL_SPACE) * 100
                     spm_win = sum(metrics.spm_window)/len(metrics.spm_window) if metrics.spm_window else 0
                     
-                    print(f"\n[TICK] {time.strftime('%H:%M:%S')} | Up {int(uptime//3600):02}:{int((uptime%3600)//60):02}:{int(uptime%60):02} | Tick {dt:.1f}s")
-                    print(f"  Combos   : {metrics.batches_total * GPU_BATCH_SIZE:,} / {TOTAL_SPACE:,} ({pct:.3f}%) | +{metrics.batches_since_tick * GPU_BATCH_SIZE:,}")
-                    print(f"  Rate     : {cps/1e6:.2f}M c/s (EMA {metrics.cps_ema/1e6:.2f}M) | ETA {metrics.eta_str}")
-                    print(f"  GPU      : {metrics.gpu_ms_ema:.0f}ms/batch (EMA) | batches: {metrics.batches_since_tick} | survivors: {metrics.survivors_since_tick} | SPM(200b): {spm_win:.4f}")
+                    print(f"\n[TICK] {time.strftime('%H:%M:%S')} | Up {int(uptime//3600):02}:{int((uptime%3600)//60):02}:{int(uptime%60):02} | S_n: {s_n:.4f}")
+                    print(f"  Combos   : {metrics.batches_total * governor.batch_size:,} / {TOTAL_SPACE:,} ({pct:.3f}%)")
+                    print(f"  Rate     : {cps/1e6:.2f}M c/s (EMA {metrics.cps_ema/1e6:.2f}M) | Batch: {governor.batch_size:,} | ETA {metrics.eta_str}")
+                    print(f"  GPU      : {metrics.gpu_ms_ema:.0f}ms/batch (EMA) | survivors: {metrics.survivors_since_tick} | SPM(200b): {spm_win:.4f}")
                     print(f"  CPU      : drained: {metrics.drained_since_tick} | arr/s: {int(metrics.arrangements_since_tick/dt):,} | ms: {metrics.cpu_ms_ema:.0f} (EMA) | queue: {tasks.qsize()}")
                     
-                    logger.log_tick({"combos": metrics.batches_total*GPU_BATCH_SIZE, "cps": cps, "spm": spm_win, "q": tasks.qsize()})
+                    logger.log_tick(
+                        {
+                            "combos": metrics.batches_total * governor.batch_size,
+                            "cps": cps,
+                            "spm": spm_win,
+                            "s_n": s_n,
+                            "batch": governor.batch_size,
+                            "power": getattr(number_pool, "ACTIVE_POWER", None),
+                            "pool": getattr(number_pool, "POOL_DESCRIPTION", None),
+                        }
+                    )
                     
                     # Reset Tick counters
                     metrics.batches_since_tick = 0
@@ -271,7 +386,16 @@ def run_solver():
 
     # Final Save
     with open(state_file, "w") as f:
-        json.dump({"batches_processed": metrics.batches_total, "total_found": metrics.total_found, "ts": time.time()}, f)
+        json.dump(
+            {
+                "batches_processed": metrics.batches_total,
+                "total_found": metrics.total_found,
+                "ts": time.time(),
+                "power": getattr(number_pool, "ACTIVE_POWER", None),
+                "pool": getattr(number_pool, "POOL_DESCRIPTION", None),
+            },
+            f,
+        )
     print(f"\n[!!!] SEARCH COMPLETE. Data at: {run_dir}")
 
 if __name__ == "__main__":
