@@ -1,56 +1,68 @@
-# GPU-Accelerated 3D Magic Square of Squares Solver
+# GPU-Accelerated 3x3 Magic Square of Squares Solver
 
-## Overview
-This repository contains a completely self-contained, heavily optimized pipeline for hunting the legendary **3x3 Magic Square of Squares**. The search space for a 3x3 grid composed of 9 distinct perfect squares involves 23-billion base permutations (from a localized sequence of evaluated square roots), requiring roughly 94-Trillion discrete geometric combinations to be evaluated.
+A self-contained, massively optimized pipeline for searching the legendary **3x3 Magic Square of Squares** — where every row, column, and diagonal consists of distinct perfect squares summing to the same value.
 
-A pure CPU approach takes **130 days of continuous computation**. 
-
-By utilizing a **PyTorch Tensor Probability Funnel** to crush permutations in batches of 10,000,000 arrays on the GPU before delegating topological survivors to the CPU, this pipeline achieves a **5,416% acceleration**, dropping the total runtime to **2.4 days**.
+The search space is ~2.3 billion combinations. A pure CPU approach would take **130 days**. This pipeline uses a PyTorch GPU Probability Funnel to reduce the search space before the CPU ever touches it.
 
 ---
 
-## 1. The Mathematics: Harmonic Geometry & Recursive Ratios
-The "Magic Square of Squares" requires an arrangement of nine distinct perfect squares such that every row, column, and both diagonals sum to the exact same Magic Constant. 
+## Architecture: Panning for Gold
 
-Our solver (`magic.py`) enforces strict harmonic geometry rather than just brute-force addition:
-*   **Parity & Root Triangles:** We evaluate grids based on their square roots. A perfect square implies its root is a perfect integer. By creating root triangles across the grid, we enforce geometric mean relationships (e.g., diagonal roots must act as geometric means between the center and the cross roots).
-*   **Harmonic Reflection:** True Magic Squares exhibit harmonic reflection across the center cell. The values on opposite ends of a cross must mathematically reflect.
-*   **Field Closure & Delta Tolerance:** The geometry requires resonant parity and golden spiral balance (Phi/Delta tolerances) across the 3x3 grid. Using these tolerances, the CPU isolates near-misses and exact geometric hits.
+```
+itertools.combinations(numbers, 9)  ← river of 2.3B candidate sets
+           │
+           ▼
+┌──────────────────────────────────────┐
+│  GPU PHASE A — Combination Filter    │  10,000,000 at a time
+│  • sum(combo) % 3 == 0               │  ~7 seconds per batch
+│  • magic constant in valid range     │  Eliminates ~66% upfront
+└──────────────────┬───────────────────┘
+                   │ ~3.36M survivors
+                   ▼
+┌──────────────────────────────────────┐
+│  CPU PHASE B — Permutation + Check   │  16 parallel threads
+│  • magic.check_magic(combo)          │  Tries 9 × 8! = 362,880
+│  • Full harmonic + phi + curvature   │  arrangements per combo
+│  • Root triangle geometry validation │
+└──────────────────────────────────────┘
+           │
+           ▼
+    found_squares.txt  (if discovered)
+```
 
-## 2. The Architecture: PyTorch GPU Funnel
-Evaluating 94-Trillion recursive harmonic connections on a CPU is a thermodynamic bottleneck. Instead, this system uses a two-phase architecture:
-
-### Phase A: The GPU Probability Funnel (`gpu_magic_filter.py`)
-1.  **Massive Batching:** The combinatorial generator loads 10,000,000 combinations at a time directly into VRAM (e.g., RTX 3060 Ti).
-2.  **Vectorized Matrix Math:** PyTorch calculates the 8 topological line-sums (3 rows, 3 cols, 2 diagonals) simultaneously across all 10 million arrays in milliseconds.
-3.  **Boolean Masking:** A strict logic gate (`== magic_sum`) instantly drops 99.9% of mathematically impossible grids.
-4.  **Handoff:** The mathematically viable "survivors" (usually 0 to 5 out of 10 million) are returned to the system RAM.
-
-### Phase B: CPU Grounding & Verification (`run_solver.py`)
-1.  **16-Thread Delegation:** The Python multiprocessing pool receives the tiny handful of surviving geometric configurations.
-2.  **Harmonic Verification:** The CPU hardware threads execute the deep, branching logic inside `magic.py` to check Delta, Phi, spatial curvature, and root harmonic reflection.
-3.  **State Persistence:** The `run_solver.py` constantly auto-saves its chunk position to `hunting_magic_state.json` allowing the search to be paused and resumed indefinitely.
+**Why this design?**
+- The GPU is cheap at set-level math but can't evaluate geometric arrangements. It acts as a **sluice box** — running river water (combinations) through a screen to eliminate obvious gravel.
+- The CPU is expensive at permutations but is the only tool for the deep harmonic checks. It only sees the **concentrated candidate pan** after GPU-filtering.
+- Scalable: one GPU can feed N CPU machines simultaneously. If you had 2 CPUs, the GPU simply feeds both.
 
 ---
 
-## 3. How to Run
-### Requirements:
+## The Math: Harmonic Geometry
+
+The search isn't pure brute force — `magic.py` enforces strict geometric constraints:
+- **Parity & Root Triangles**: Grid roots must form geometric mean relationships
+- **Harmonic Reflection**: Opposite cross values must mathematically reflect across the center
+- **Phi / Delta Tolerance**: Golden ratio and delta tolerance checks across diagonals
+- **Curvature Balance**: Row energy (sum of square roots) must be within tight tolerance
+
+---
+
+## Phase 25: Pipeline Contract Fix
+
+> **v1 Bug (now fixed):** The original GPU filter treated sorted combination-tuples as fixed-position grids and checked row/col/diagonal sums directly. Since `itertools.combinations` produces *sorted, unordered* sets, this guaranteed 0 survivors always — not because no magic squares exist, but because the data contract was wrong.
+
+> **v2 Fix:** The GPU filter now performs *permutation-invariant* set-level checks (`sum % 3 == 0`, range bounds) — constraints valid for **any** arrangement of the 9 elements. The CPU then handles full permutation-and-validate.
+
+---
+
+## Requirements
 - Python 3.10+
-- `torch` (PyTorch with CUDA support for GPU acceleration)
+- `torch` (PyTorch with CUDA)
 - `numpy`
 
-### Execution:
-Simply run the standalone solver script:
-
+## Run
 ```bash
 python run_solver.py
 ```
 
-The script will automatically engage the PyTorch tensors, initialize the 16 multiprocessing CPU threads, and begin crushing 10-million grid batches. Progress is logged to the console, and any discovered topological hits are written identically to `found_squares.txt`.
-
----
-
-## Historical Note: Semantic Physics Engine Gating
-This solver was originally developed as the "Sovereign Subconscious" for the **AIOS V2 (Steel Brain)** framework. In that OS, this script was supervised by a Semantic Physics Engine that measured the physical Carnot heat generated by the massive Tensor/CPU data handoffs. The OS would enact "Kernel Descents" to throttle the combinatorial pipeline whenever Structural Memory (VRAM) or Thermodynamics (°C) threatened to lock the system.
-
-This standalone version removes the AIOS V2 Physics Engine for maximum unconstrained speed. Ensure your hardware has adequate cooling.
+Progress auto-saves to `hunting_magic_state.json` — interrupt and resume at any time.
